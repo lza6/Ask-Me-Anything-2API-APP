@@ -94,7 +94,17 @@ POST https://api.openai.com/v1/moderations  (RC open_ai_keys[0])
 -> 401 {"code":"invalid_api_key","message":"Incorrect API key provided: sk-proj-***...hlkA"}
 ```
 
-## 8. 未执行 / 阻塞
+## 8. 容器化（已验证）
+
+```
+docker build -t ama-2api:0.1.0 .          -> exit 0
+docker run -d -p 8961:8960 -e UPSTREAM=mock ama-2api:0.1.0
+GET /healthz  -> 200 {"ok":true,"upstream":"mock","in_flight":0}
+GET /v1/models -> 200
+GET /         -> 200（demo 页）
+```
+
+## 9. 未执行 / 阻塞
 
 | 项 | 原因 |
 |---|---|

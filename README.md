@@ -24,7 +24,11 @@ tools/real_probe.py       按还原协议直接打 nowai 入口，打印服务�
 tools/scenario_check.py   上游故障场景矩阵（8 个场景，起停真实子进程断言）
 tools/e2e_demo.py         demo 页真实浏览器 E2E（Playwright）
 sources-key-files/        关键反编译源码（协议出处，带 jadx 行号）
-docs/                     协议还原 + 上游状态
+docs/NEW-API-INTEGRATION.md  **new-api 对接指南**（字段级配置 + 能力矩阵 + 错误码 + 切真实上游）
+docs/PROTOCOL.md          协议还原（签名算法 / DTO / SSE / 模型表）
+docs/UPSTREAM_STATUS.md   上游存活定案（逐主机证据）
+docs/verification_log.md  第一轮全部实跑证据
+Dockerfile / .dockerignore  容器化部署（对接联调用）
 artifacts/                探测证据 / 压测报告 / 截图（含敏感配置，勿入库）
 ```
 
@@ -32,10 +36,19 @@ artifacts/                探测证据 / 压测报告 / 截图（含敏感配置
 
 ```powershell
 cd D:/apk-analysis/ama
-pip install -r requirements.txt
+pip install -r requirements.txt          # 仅运行网关；开发/验证用 requirements-dev.txt
 python -m uvicorn gateway.app:app --host 127.0.0.1 --port 8960
 # 浏览器打开 http://127.0.0.1:8960/
 ```
+
+Docker：
+
+```bash
+docker build -t ama-2api:0.1.0 .
+docker run -d --name ama-2api -p 8960:8960 -e UPSTREAM=mock ama-2api:0.1.0
+```
+
+**要接 new-api 请直接看 [`docs/NEW-API-INTEGRATION.md`](docs/NEW-API-INTEGRATION.md)**。
 
 ```bash
 # OpenAI 兼容调用
@@ -73,15 +86,16 @@ curl -s http://127.0.0.1:8960/v1/chat/completions \
 
 未验证：真实 `nowai` 上游的响应格式（`content` 增量/全量、`status` 取值）——上游不可达，无样本。
 
-## 与 new-api 对接（预置，未接）
+## 与 new-api 对接
 
-若后续上游复活，渠道按 OpenAI 通用类型配置即可：
+完整指南见 **[`docs/NEW-API-INTEGRATION.md`](docs/NEW-API-INTEGRATION.md)**（渠道字段级配置、模型倍率、
+能力矩阵、错误码对照、切真实上游的步骤、mock 模式会真实扣费的警告）。
 
-- 渠道类型：`OpenAI`（type=1）
-- Base URL：`http://<网关地址>:8960`（**不带** `/v1`，new-api 会自行拼 `/v1/chat/completions`）
-- 模型：`gpt-4o-mini` / `gpt-4o` / `o1` / `claude` / `gemini-3.0-pro` / `deepseek-r1` / `grok` / `llama-4`
-- 必须手工配 `ModelRatio`，否则按默认倍率计费会与实际成本脱节
-- 渠道「测试」按钮打的是 `/v1/models`，本网关已实现，可自动通过
+三条最容易踩的：
+
+1. Base URL 填 `http://<网关>:8960`，**不带 `/v1`**；
+2. 渠道类型 `OpenAI`（type=1），模型逐个填全 8 个，否则 422；
+3. **mock 模式也要把模型倍率设 0**，否则 new-api 会照默认倍率真实扣费。
 
 ## 安全说明
 

@@ -1,0 +1,9 @@
+artifacts/
+raw/
+src/
+apk_dec/
+__pycache__/
+*.pyc
+*.apk
+.git/
+.env
