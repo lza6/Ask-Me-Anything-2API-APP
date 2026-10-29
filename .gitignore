@@ -1,0 +1,9 @@
+# 含上游明文凭证，禁止入库
+artifacts/
+.env
+raw/
+src/
+apk_dec/
+__pycache__/
+*.pyc
+*.apk

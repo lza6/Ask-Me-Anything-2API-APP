@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ask Me Anything 2API · Demo</title>
+<style>
+  :root {
+    --bg:#0b0f14; --panel:#121821; --line:#1e2733; --text:#e6edf3; --muted:#8b97a6;
+    --accent:#3ddc97; --accent-dim:#1f7a56; --warn:#f0b429; --danger:#ef5350;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.6 -apple-system,"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  header h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.3px; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
+  .badge.ok { color:var(--accent); border-color:var(--accent-dim); }
+  main { max-width:920px; margin:0 auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  select, input, button, textarea { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  textarea { width:100%; resize:vertical; min-height:78px; }
+  button { cursor:pointer; transition:.15s border-color,.15s color; }
+  button:hover { border-color:var(--accent-dim); color:var(--accent); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:var(--accent-dim); border-color:var(--accent-dim); color:#eafff5; }
+  button.primary:hover { color:#fff; }
+  #log { display:flex; flex-direction:column; gap:12px; }
+  .msg { border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:var(--panel); white-space:pre-wrap; word-break:break-word; }
+  .msg .role { font-size:11px; letter-spacing:.8px; text-transform:uppercase; color:var(--muted); margin-bottom:4px; }
+  .msg.user { border-left:3px solid #2f81f7; }
+  .msg.assistant { border-left:3px solid var(--accent); }
+  .msg.error { border-left:3px solid var(--danger); color:#ffd7d5; }
+  #stats { font-size:12px; color:var(--muted); display:flex; gap:16px; flex-wrap:wrap; }
+  #stats b { color:var(--text); font-weight:600; }
+  .hint { font-size:12px; color:var(--muted); }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--muted); display:inline-block; }
+  .dot.on { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ask Me Anything 2API · 本地 demo</h1>
+  <span class="badge" id="upstream-badge"><span class="dot" id="dot"></span> upstream: ?</span>
+  <span class="badge">协议: pass + HMAC-SHA512 + SSE</span>
+</header>
+
+<main>
+  <div class="row">
+    <label class="hint" for="model">模型</label>
+    <select id="model">
+      <option value="gpt-4o-mini">gpt-4o-mini (App type 102)</option>
+      <option value="gpt-4o">gpt-4o (103)</option>
+      <option value="o1">o1 (104)</option>
+      <option value="claude">claude (105)</option>
+      <option value="gemini-3.0-pro">gemini-3.0-pro (106)</option>
+      <option value="deepseek-r1">deepseek-r1 (107)</option>
+      <option value="grok">grok (108)</option>
+      <option value="llama-4">llama-4 (109)</option>
+    </select>
+    <label class="hint" for="temp">temperature</label>
+    <input id="temp" type="number" min="0" max="2" step="0.1" value="0.7" style="width:80px" />
+    <label class="hint" for="maxtok">max_tokens</label>
+    <input id="maxtok" type="number" min="1" max="8192" step="64" value="512" style="width:96px" />
+    <label class="hint"><input id="stream" type="checkbox" checked style="vertical-align:-2px" /> 流式</label>
+    <button id="clear">清空</button>
+  </div>
+
+  <div id="log"></div>
+
+  <textarea id="input" placeholder="输入消息，Ctrl+Enter 发送"></textarea>
+  <div class="row">
+    <button class="primary" id="send">发送</button>
+    <div id="stats">
+      <span>首包 <b id="ttft">-</b></span>
+      <span>总耗时 <b id="total">-</b></span>
+      <span>字符 <b id="chars">0</b></span>
+      <span>估算 tok/s <b id="tps">-</b></span>
+    </div>
+  </div>
+  <div class="hint">该页面只与本地网关通信；网关按 <code>UPSTREAM</code> 决定打 mock 还是真实 nowai 协议。</div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let history = [];
+
+async function refreshHealth() {
+  try {
+    const r = await fetch('/healthz');
+    const d = await r.json();
+    $('dot').classList.add('on');
+    $('upstream-badge').classList.add('ok');
+    $('upstream-badge').innerHTML = '<span class="dot on" id="dot"></span> upstream: ' + d.upstream;
+  } catch { /* 保持默认 */ }
+}
+
+function addMsg(role, text) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + role;
+  el.innerHTML = '<div class="role">' + role + '</div><div class="body"></div>';
+  el.querySelector('.body').textContent = text;
+  $('log').appendChild(el);
+  el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  return el.querySelector('.body');
+}
+
+async function send() {
+  const text = $('input').value.trim();
+  if (!text) return;
+  $('input').value = '';
+  $('send').disabled = true;
+  addMsg('user', text);
+  history.push({ role: 'user', content: text });
+
+  const bodyEl = addMsg('assistant', '');
+  const t0 = performance.now();
+  let ttft = null, chars = 0;
+  $('ttft').textContent = '-'; $('total').textContent = '-'; $('chars').textContent = '0'; $('tps').textContent = '-';
+
+  const payload = {
+    model: $('model').value,
+    temperature: parseFloat($('temp').value || '0.7'),
+    max_tokens: parseInt($('maxtok').value || '512', 10),
+    stream: $('stream').checked,
+    messages: history.slice(-20),
+  };
+
+  try {
+    const resp = await fetch('/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: { message: resp.statusText } }));
+      throw new Error(err.error?.message || resp.statusText);
+    }
+
+    if (!payload.stream) {
+      const data = await resp.json();
+      bodyEl.textContent = data.choices[0].message.content;
+      chars = bodyEl.textContent.length;
+      history.push({ role: 'assistant', content: bodyEl.textContent });
+    } else {
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const raw = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 2);
+          if (!raw.startsWith('data:')) continue;
+          const data = raw.slice(5).trim();
+          if (data === '[DONE]') continue;
+          let obj;
+          try { obj = JSON.parse(data); } catch { continue; }
+          if (obj.error) throw new Error(obj.error.message);
+          const delta = obj.choices?.[0]?.delta?.content || '';
+          if (delta) {
+            if (ttft === null) { ttft = performance.now() - t0; $('ttft').textContent = Math.round(ttft) + ' ms'; }
+            bodyEl.textContent += delta;
+            chars += delta.length;
+            $('chars').textContent = chars;
+            bodyEl.parentElement.scrollIntoView({ block: 'end' });
+          }
+        }
+      }
+      history.push({ role: 'assistant', content: bodyEl.textContent });
+    }
+  } catch (e) {
+    bodyEl.parentElement.classList.add('error');
+    bodyEl.textContent = '请求失败：' + e.message;
+  } finally {
+    const ms = performance.now() - t0;
+    $('total').textContent = Math.round(ms) + ' ms';
+    const span = (ms - (ttft || 0)) / 1000;
+    if (chars && span > 0) $('tps').textContent = (chars / span).toFixed(1);
+    $('send').disabled = false;
+    $('input').focus();
+  }
+}
+
+$('send').onclick = send;
+$('clear').onclick = () => { history = []; $('log').innerHTML = ''; };
+$('input').addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') send();
+});
+refreshHealth();
+</script>
+</body>
+</html>
